@@ -124,7 +124,7 @@ OUTPUT_DIR = "Knowledge"
 ATTACHMENTS_DIRNAME = "_attachments"
 
 
-def print_banner(include_attachments=False):
+def print_banner(include_attachments=False, attachment_max_bytes=10 * 1024 * 1024):
     print()
     print("=" * 72)
     print("MBOX TO OPEN WEBUI KNOWLEDGE CONVERTER")
@@ -147,6 +147,10 @@ def print_banner(include_attachments=False):
     print("  - Email body text")
     if include_attachments:
         print("  - Attachments (saved to disk)")
+        print(
+            "  - Attachment max size: "
+            f"{attachment_max_bytes:,} bytes"
+        )
     print()
     print("Excluded:")
     if not include_attachments:
@@ -370,7 +374,13 @@ def sanitize_filename(name, fallback="attachment"):
     return cleaned or fallback
 
 
-def extract_attachments(msg, attachments_root, message_key, include_attachments):
+def extract_attachments(
+    msg,
+    attachments_root,
+    message_key,
+    include_attachments,
+    attachment_max_bytes,
+):
 
     if not include_attachments:
         return []
@@ -420,6 +430,9 @@ def extract_attachments(msg, attachments_root, message_key, include_attachments)
             payload = part.get_payload(decode=True)
 
             if payload is None:
+                continue
+
+            if len(payload) > attachment_max_bytes:
                 continue
 
             safe_name = sanitize_filename(
@@ -483,7 +496,11 @@ def get_thread_id(msg):
     return ""
 
 
-def process_mbox(mbox_file, include_attachments=False):
+def process_mbox(
+    mbox_file,
+    include_attachments=False,
+    attachment_max_bytes=10 * 1024 * 1024,
+):
 
     print()
     print(f"Processing: {mbox_file}")
@@ -572,6 +589,7 @@ def process_mbox(mbox_file, include_attachments=False):
                 attachments_root,
                 message_key,
                 include_attachments,
+                attachment_max_bytes,
             )
 
             if not body and not attachments:
@@ -718,6 +736,17 @@ def main():
     )
 
     parser.add_argument(
+        "--attachment-max-bytes",
+        type=int,
+        default=10 * 1024 * 1024,
+        help=(
+            "Maximum attachment size in bytes "
+            "when --include-attachments is enabled "
+            "(default: 10485760)."
+        ),
+    )
+
+    parser.add_argument(
         "mbox_files",
         nargs="+",
         help="One or more .mbox files to process.",
@@ -725,8 +754,15 @@ def main():
 
     args = parser.parse_args()
 
+    if args.attachment_max_bytes < 1:
+        print(
+            "ERROR: --attachment-max-bytes must be >= 1"
+        )
+        sys.exit(1)
+
     print_banner(
-        include_attachments=args.include_attachments
+        include_attachments=args.include_attachments,
+        attachment_max_bytes=args.attachment_max_bytes,
     )
 
     os.makedirs(
@@ -752,6 +788,7 @@ def main():
         total += process_mbox(
             mbox_file,
             include_attachments=args.include_attachments,
+            attachment_max_bytes=args.attachment_max_bytes,
         )
 
     print()

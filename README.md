@@ -17,7 +17,8 @@ Convert one or more Gmail/Google Takeout MBOX files into Markdown files grouped 
   - Thread-ID (prefers X-GM-THRID)
   - Body
 - Includes all messages (including Trash)
-- Ignores attachments and embedded images
+- Optional attachment export with size limit control
+- Ignores embedded images in message body parsing
 - Writes output grouped by `Knowledge/YYYY/YYYY-MM.md`
 
 ## Requirements
@@ -37,6 +38,18 @@ Multiple mailboxes:
 
 ```bash
 python3 mbox_to_knowledge.py file1.mbox file2.mbox
+```
+
+Include attachments (default max size: 10 MB):
+
+```bash
+python3 mbox_to_knowledge.py --include-attachments mailbox.mbox
+```
+
+Include attachments with custom size limit (example: 2 MB):
+
+```bash
+python3 mbox_to_knowledge.py --include-attachments --attachment-max-bytes 2097152 mailbox.mbox
 ```
 
 Example:
@@ -66,6 +79,12 @@ Knowledge/
 ```
 
 Each entry is separated by `---` and includes the preserved headers followed by the cleaned body.
+
+When attachment export is enabled:
+
+- Attachments are saved under `Knowledge/_attachments/<year>/<month>/<message>/`
+- Attachments larger than the configured max are skipped
+- Markdown entries include an `Attachments:` section for saved files
 
 ## Notes
 
