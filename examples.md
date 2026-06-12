@@ -23,6 +23,7 @@ What it does:
 - Reads the MBOX file
 - Exports Subject, From, To, Cc, Date, Labels, Thread-ID, Body
 - Does not save attachments
+- Deduplicates by default (so overlapping emails are skipped)
 
 Output structure:
 
@@ -173,6 +174,63 @@ What it does:
 - Appends to existing `Knowledge/YYYY/YYYY-MM.md` files
 - Creates missing year/month files as needed
 - Recreates attachment directories if missing
+
+## 5. Process overlapping MBOX files (dedup enabled by default)
+
+Use this when two or more MBOX files contain the same emails.
+
+Command:
+
+```bash
+python3 mbox_to_knowledge.py \
+    "/Volumes/Work03/Memory/Mail/All mail Including Spam and Trash.mbox" \
+    "/Volumes/Work03/Memory/Mail/All mail Including Spam and Trash-002.mbox"
+```
+
+What it does:
+
+- Detects duplicates across input files in the same run
+- Skips duplicates instead of writing duplicate markdown entries
+- Prints duplicate detection messages during processing
+- Prints total duplicates skipped in the final summary
+
+Typical console output lines:
+
+```text
+Duplicate detected: message 12,345 skipped
+Completed: exported=45,678 skipped=9,999 duplicates=8,765
+Done. Exported 123,456 messages.
+Duplicates detected/skipped: 8,765
+```
+
+Output structure:
+
+```text
+Knowledge/
+├── YYYY/
+│   └── YYYY-MM.md
+└── _attachments/
+        └── YYYY/
+                └── MM/
+                        └── msg-XXXXXXXX/
+```
+
+## 6. Disable deduplication (allow duplicates)
+
+Use this only when you intentionally want repeated entries.
+
+Command:
+
+```bash
+python3 mbox_to_knowledge.py --allow-duplicates \
+    "/Volumes/Work03/Memory/Mail/All mail Including Spam and Trash.mbox" \
+    "/Volumes/Work03/Memory/Mail/All mail Including Spam and Trash-002.mbox"
+```
+
+What it does:
+
+- Disables default deduplication
+- Writes all matching messages even if repeated across files
 
 Output structure after repeated runs:
 

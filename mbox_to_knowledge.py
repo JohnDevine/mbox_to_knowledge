@@ -145,6 +145,8 @@ def print_banner(include_attachments=False, attachment_max_bytes=10 * 1024 * 102
     print("  - Gmail Labels")
     print("  - Thread-ID")
     print("  - Email body text")
+    print("  - Deduplication (enabled by default)")
+    print("    using Message-ID, then content fingerprint")
     if include_attachments:
         print("  - Attachments (saved to disk)")
         print(
@@ -496,8 +498,48 @@ def get_thread_id(msg):
     return ""
 
 
+def dedup_key(
+    msg,
+    subject,
+    sender,
+    recipient_to,
+    recipient_cc,
+    date_header,
+    body,
+):
+
+    message_id = sanitize_header(
+        header_value(
+            msg,
+            "Message-ID",
+        )
+    )
+
+    if message_id:
+        return f"msgid:{message_id.lower()}"
+
+    canonical = "\n".join(
+        [
+            subject.lower(),
+            sender.lower(),
+            recipient_to.lower(),
+            recipient_cc.lower(),
+            date_header.lower(),
+            body,
+        ]
+    )
+
+    digest = hashlib.sha256(
+        canonical.encode("utf-8", errors="ignore")
+    ).hexdigest()
+
+    return f"fp:{digest}"
+
+
 def process_mbox(
     mbox_file,
+    seen_keys,
+    deduplicate=True,
     include_attachments=False,
     attachment_max_bytes=10 * 1024 * 1024,
 ):
@@ -508,6 +550,7 @@ def process_mbox(
 
     exported = 0
     skipped = 0
+    duplicates = 0
 
     mbox = mailbox.mbox(mbox_file)
 
@@ -518,7 +561,8 @@ def process_mbox(
             print(
                 f"  scanned={i:,} "
                 f"exported={exported:,} "
-                f"skipped={skipped:,}"
+                f"skipped={skipped:,} "
+                f"duplicates={duplicates:,}"
             )
 
         try:
@@ -543,6 +587,56 @@ def process_mbox(
             body = clean_body(
                 get_text(msg)
             )
+
+            subject = sanitize_header(
+                header_value(
+                    msg,
+                    "Subject"
+                )
+            )
+
+            sender = sanitize_header(
+                header_value(
+                    msg,
+                    "From"
+                )
+            )
+
+            recipient_to = sanitize_header(
+                header_value(
+                    msg,
+                    "To"
+                )
+            )
+
+            recipient_cc = sanitize_header(
+                header_value(
+                    msg,
+                    "Cc"
+                )
+            )
+
+            if deduplicate:
+                key = dedup_key(
+                    msg,
+                    subject,
+                    sender,
+                    recipient_to,
+                    recipient_cc,
+                    date_header,
+                    body,
+                )
+
+                if key in seen_keys:
+                    duplicates += 1
+                    skipped += 1
+                    print(
+                        "  Duplicate detected: "
+                        f"message {i:,} skipped"
+                    )
+                    continue
+
+                seen_keys.add(key)
 
             year = str(dt.year)
             month = f"{dt.month:02d}"
@@ -595,34 +689,6 @@ def process_mbox(
             if not body and not attachments:
                 skipped += 1
                 continue
-
-            subject = sanitize_header(
-                header_value(
-                    msg,
-                    "Subject"
-                )
-            )
-
-            sender = sanitize_header(
-                header_value(
-                    msg,
-                    "From"
-                )
-            )
-
-            recipient_to = sanitize_header(
-                header_value(
-                    msg,
-                    "To"
-                )
-            )
-
-            recipient_cc = sanitize_header(
-                header_value(
-                    msg,
-                    "Cc"
-                )
-            )
 
             labels = sanitize_header(
                 header_value(
@@ -712,9 +778,10 @@ def process_mbox(
         f"Completed:"
         f" exported={exported:,}"
         f" skipped={skipped:,}"
+        f" duplicates={duplicates:,}"
     )
 
-    return exported
+    return exported, duplicates
 
 
 def main():
@@ -747,6 +814,15 @@ def main():
     )
 
     parser.add_argument(
+        "--allow-duplicates",
+        action="store_true",
+        help=(
+            "Disable deduplication and allow duplicate "
+            "emails in output."
+        ),
+    )
+
+    parser.add_argument(
         "mbox_files",
         nargs="+",
         help="One or more .mbox files to process.",
@@ -771,6 +847,8 @@ def main():
     )
 
     total = 0
+    total_duplicates = 0
+    seen_keys = set()
 
     for mbox_file in args.mbox_files:
 
@@ -785,16 +863,24 @@ def main():
 
             continue
 
-        total += process_mbox(
+        exported, duplicates = process_mbox(
             mbox_file,
+            seen_keys,
+            deduplicate=(not args.allow_duplicates),
             include_attachments=args.include_attachments,
             attachment_max_bytes=args.attachment_max_bytes,
         )
+
+        total += exported
+        total_duplicates += duplicates
 
     print()
     print("=" * 72)
     print(
         f"Done. Exported {total:,} messages."
+    )
+    print(
+        f"Duplicates detected/skipped: {total_duplicates:,}"
     )
     print(
         f"Knowledge directory:\n"

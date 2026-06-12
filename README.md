@@ -1,6 +1,6 @@
 # mbox_to_knowledge
 
-Convert one or more Gmail/Google Takeout MBOX files into Markdown files grouped by year and month for knowledge ingestion workflows.
+Convert one or more Gmail/Google Takeout MBOX files into Markdown files grouped by year and month for knowledge ingestion into OpenWebUi workflows.
 
 ## Features
 
@@ -17,6 +17,9 @@ Convert one or more Gmail/Google Takeout MBOX files into Markdown files grouped 
   - Thread-ID (prefers X-GM-THRID)
   - Body
 - Includes all messages (including Trash)
+- Deduplicates messages by default across all input MBOX files in a run
+  - Uses `Message-ID` when present
+  - Falls back to a content fingerprint when `Message-ID` is missing
 - Optional attachment export with size limit control
 - Ignores embedded images in message body parsing
 - Writes output grouped by `Knowledge/YYYY/YYYY-MM.md`
@@ -38,6 +41,12 @@ Multiple mailboxes:
 
 ```bash
 python3 mbox_to_knowledge.py file1.mbox file2.mbox
+```
+
+Allow duplicates (disable default deduplication):
+
+```bash
+python3 mbox_to_knowledge.py --allow-duplicates file1.mbox file2.mbox
 ```
 
 Include attachments (default max size: 10 MB):
@@ -85,6 +94,11 @@ When attachment export is enabled:
 - Attachments are saved under `Knowledge/_attachments/<year>/<month>/<message>/`
 - Attachments larger than the configured max are skipped
 - Markdown entries include an `Attachments:` section for saved files
+
+Duplicate reporting:
+
+- During processing, duplicate messages are reported as detected and skipped
+- Completion summary includes total duplicates skipped
 
 ## Notes
 
