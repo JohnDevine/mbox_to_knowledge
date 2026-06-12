@@ -111,6 +111,8 @@ For a fresh run:
 then rerun the script.
 """
 
+import argparse
+import hashlib
 import mailbox
 import os
 import re
@@ -119,9 +121,10 @@ import html
 from email.utils import parsedate_to_datetime
 
 OUTPUT_DIR = "Knowledge"
+ATTACHMENTS_DIRNAME = "_attachments"
 
 
-def print_banner():
+def print_banner(include_attachments=False):
     print()
     print("=" * 72)
     print("MBOX TO OPEN WEBUI KNOWLEDGE CONVERTER")
@@ -142,9 +145,12 @@ def print_banner():
     print("  - Gmail Labels")
     print("  - Thread-ID")
     print("  - Email body text")
+    if include_attachments:
+        print("  - Attachments (saved to disk)")
     print()
     print("Excluded:")
-    print("  - Attachments")
+    if not include_attachments:
+        print("  - Attachments")
     print("  - Images")
     print("  - PDFs")
     print("  - Office documents")
@@ -352,6 +358,112 @@ def sanitize_header(value):
     )
 
 
+def sanitize_filename(name, fallback="attachment"):
+
+    if not name:
+        return fallback
+
+    # Keep filenames filesystem-safe but readable.
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    cleaned = cleaned.strip("._")
+
+    return cleaned or fallback
+
+
+def extract_attachments(msg, attachments_root, message_key, include_attachments):
+
+    if not include_attachments:
+        return []
+
+    extracted = []
+
+    try:
+
+        if not msg.is_multipart():
+            return extracted
+
+        message_dir = os.path.join(
+            attachments_root,
+            message_key,
+        )
+
+        os.makedirs(
+            message_dir,
+            exist_ok=True,
+        )
+
+        for part in msg.walk():
+
+            if part.is_multipart():
+                continue
+
+            disposition = str(
+                part.get(
+                    "Content-Disposition",
+                    "",
+                )
+            ).lower()
+
+            filename = part.get_filename()
+
+            is_attachment = (
+                "attachment" in disposition
+                or (
+                    filename
+                    and "inline" not in disposition
+                )
+            )
+
+            if not is_attachment:
+                continue
+
+            payload = part.get_payload(decode=True)
+
+            if payload is None:
+                continue
+
+            safe_name = sanitize_filename(
+                filename or "attachment.bin"
+            )
+
+            digest = hashlib.sha256(
+                payload
+            ).hexdigest()[:10]
+
+            base, ext = os.path.splitext(safe_name)
+
+            output_name = (
+                f"{base}-{digest}{ext}"
+                if ext else
+                f"{safe_name}-{digest}"
+            )
+
+            output_path = os.path.join(
+                message_dir,
+                output_name,
+            )
+
+            with open(
+                output_path,
+                "wb",
+            ) as f:
+                f.write(payload)
+
+            extracted.append(
+                {
+                    "name": safe_name,
+                    "mime": part.get_content_type(),
+                    "size": len(payload),
+                    "path": output_path,
+                }
+            )
+
+    except Exception:
+        return extracted
+
+    return extracted
+
+
 def get_thread_id(msg):
     # Gmail Takeout commonly includes X-GM-THRID.
     # Fallbacks are included for broader mailbox compatibility.
@@ -371,7 +483,7 @@ def get_thread_id(msg):
     return ""
 
 
-def process_mbox(mbox_file):
+def process_mbox(mbox_file, include_attachments=False):
 
     print()
     print(f"Processing: {mbox_file}")
@@ -415,10 +527,6 @@ def process_mbox(mbox_file):
                 get_text(msg)
             )
 
-            if not body:
-                skipped += 1
-                continue
-
             year = str(dt.year)
             month = f"{dt.month:02d}"
 
@@ -436,6 +544,39 @@ def process_mbox(mbox_file):
                 year_dir,
                 f"{year}-{month}.md"
             )
+
+            attachments_root = os.path.join(
+                OUTPUT_DIR,
+                ATTACHMENTS_DIRNAME,
+                year,
+                month,
+            )
+
+            message_key_raw = sanitize_header(
+                header_value(
+                    msg,
+                    "Message-ID",
+                )
+            )
+
+            if not message_key_raw:
+                message_key_raw = f"msg-{i:08d}"
+
+            message_key = sanitize_filename(
+                message_key_raw,
+                fallback=f"msg-{i:08d}",
+            )
+
+            attachments = extract_attachments(
+                msg,
+                attachments_root,
+                message_key,
+                include_attachments,
+            )
+
+            if not body and not attachments:
+                skipped += 1
+                continue
 
             subject = sanitize_header(
                 header_value(
@@ -510,7 +651,31 @@ def process_mbox(mbox_file):
                     f"Thread-ID: {thread_id}\n\n"
                 )
 
-                f.write(body)
+                if body:
+                    f.write(body)
+                else:
+                    f.write("(No body text extracted)")
+
+                if attachments:
+
+                    f.write("\n\nAttachments:\n")
+
+                    for item in attachments:
+                        rel_path = os.path.relpath(
+                            item["path"],
+                            start=os.getcwd(),
+                        )
+
+                        f.write(
+                            f"- {item['name']} "
+                            f"({item['mime']}, "
+                            f"{item['size']} bytes)\n"
+                        )
+
+                        f.write(
+                            f"  Saved: {rel_path}\n"
+                        )
+
                 f.write("\n")
 
             exported += 1
@@ -536,17 +701,33 @@ def process_mbox(mbox_file):
 
 def main():
 
-    print_banner()
-
-    if len(sys.argv) < 2:
-
-        print(
-            "Usage:\n"
-            f"  {sys.argv[0]} mailbox.mbox\n"
-            f"  {sys.argv[0]} file1.mbox file2.mbox"
+    parser = argparse.ArgumentParser(
+        description=(
+            "Convert Gmail/Takeout MBOX files "
+            "to markdown grouped by year/month."
         )
+    )
 
-        sys.exit(1)
+    parser.add_argument(
+        "--include-attachments",
+        action="store_true",
+        help=(
+            "Save attachments to disk and list them "
+            "in each markdown entry."
+        ),
+    )
+
+    parser.add_argument(
+        "mbox_files",
+        nargs="+",
+        help="One or more .mbox files to process.",
+    )
+
+    args = parser.parse_args()
+
+    print_banner(
+        include_attachments=args.include_attachments
+    )
 
     os.makedirs(
         OUTPUT_DIR,
@@ -555,7 +736,7 @@ def main():
 
     total = 0
 
-    for mbox_file in sys.argv[1:]:
+    for mbox_file in args.mbox_files:
 
         if not os.path.isfile(
             mbox_file
@@ -569,7 +750,8 @@ def main():
             continue
 
         total += process_mbox(
-            mbox_file
+            mbox_file,
+            include_attachments=args.include_attachments,
         )
 
     print()
